@@ -92,7 +92,7 @@ async def start_services():
     global DISCORD_ERROR_LOG
     
     # 🎯 PASTE YOUR TOKEN HERE
-    BOT_TOKEN = "YOUR_DISCORD_BOT_TOKEN_GOES_HERE"
+    BOT_TOKEN = "MTUxNTQ1MjUzODE0MzM3OTU2Ng.GOvQf5.jMhlzkAdR9pcchACZSkrzwIWgLc8Enae-lfNbE"
     
     port = int(os.environ.get("PORT", 7860))
     config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
