@@ -2,13 +2,14 @@ import os
 import random
 import sqlite3
 import asyncio
+from contextlib import asynccontextmanager
 import discord
 from discord.ext import commands
 from fastapi import FastAPI
 import uvicorn
 
 # ==============================================================================
-# 1. LOCAL DATA LEDGER SETUP (SQLite)
+# 1. LOCAL DATA LEDGER SETUP
 # ==============================================================================
 DB_FILE = "taiga_state.db"
 
@@ -31,7 +32,7 @@ init_db()
 active_tokens = {}
 
 # ==============================================================================
-# 2. DISCORD BOT ENGINE (NATIVE COMMANDS FRAMEWORK)
+# 2. DISCORD BOT LAYER
 # ==============================================================================
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
 
@@ -44,10 +45,32 @@ async def on_ready():
         print(f"Sync Error: {e}")
 
 # ==============================================================================
-# 3. CORE WEB GATEWAY (FASTAPI)
+# 3. FASTAPI LIFESPAN MANAGER (THE ANTI-CRASH KEY)
 # ==============================================================================
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # This runs IMMEDIATELY after Uvicorn binds to the port, satisfying Railway
+    token = os.environ.get("DISCORD_BOT_TOKEN")
+    if not token:
+        print("❌ CRITICAL ERROR: 'DISCORD_BOT_TOKEN' variable missing on Railway!")
+        yield
+        return
 
+    # Fire off the bot connection as a non-blocking background task
+    bot_task = asyncio.create_task(bot.start(token.strip()))
+    
+    yield  # Hand over total execution control to the web framework
+    
+    # Clean up tasks cleanly if the container stops
+    await bot.close()
+    await bot_task
+
+# Pass the lifespan handler directly into FastAPI
+app = FastAPI(lifespan=lifespan)
+
+# ==============================================================================
+# 4. WEB ENDPOINTS
+# ==============================================================================
 @app.get("/")
 async def homepage():
     return {
@@ -79,31 +102,10 @@ async def verify_link_from_minecraft(username: str, uuid: str, token: str, distr
         conn.close()
 
 # ==============================================================================
-# 4. UNIFIED CONCURRENT TASK LOOP RUNNER
+# 5. MONOLITHIC ENTRYPOINT
 # ==============================================================================
-async def main():
-    # Railway automatically injects the PORT parameter based on its routing layer
-    port = int(os.environ.get("PORT", 8080))
-    
-    # Pulls the token dynamically from your Railway Service Variables tab
-    token = os.environ.get("DISCORD_BOT_TOKEN")
-    
-    if not token:
-        print("❌ CRITICAL ERROR: The 'DISCORD_BOT_TOKEN' environment variable is missing on Railway!")
-        # We still serve FastAPI so the project doesn't completely crash/loop error out
-        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
-        server = uvicorn.Server(config)
-        await server.serve()
-        return
-
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
-    server = uvicorn.Server(config)
-    
-    # Run the Web Gateway and the Discord WebSocket Client concurrently on the same loop
-    await asyncio.gather(
-        server.serve(),
-        bot.start(token.strip())
-    )
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Pull port assigned by Railway
+    port = int(os.environ.get("PORT", 8080))
+    # Run Uvicorn synchronously on the main thread so it opens the port instantly
+    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
